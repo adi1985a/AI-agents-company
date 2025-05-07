@@ -245,30 +245,49 @@ class AIManager:
     
     async def delegate_task(self, task: Task):
         """Delegate the task to a suitable agent based on skills and priority"""
+        if self.office_simulation.gui:
+            self.office_simulation.gui.update_task_status(
+                f"Finding suitable agent for task: {task.title}"
+            )
+        
         suitable_agent_id = self.task_manager.find_suitable_agent(task)
         
         if suitable_agent_id:
             agent = self.agents[suitable_agent_id]
             
-            # Consider agent's current task and priority
-            if agent.current_task_id:
-                current_task = self.task_manager.get_task(agent.current_task_id)
-                if current_task and current_task.priority == TaskPriority.CRITICAL:
-                    # Agent is busy with a critical task, don't interrupt
-                    return
+            if self.office_simulation.gui:
+                self.office_simulation.gui.update_task_status(
+                    f"Selected agent {agent.name} for task {task.title}"
+                )
+            
+            # Create a subtask for the agent
+            subtask = Task(
+                title=f"Subtask for {task.title}",
+                description=task.description,
+                creator_id=self.office_simulation.boss_agent_id,
+                parent_task_id=task.id
+            )
+            
+            self.task_manager.tasks[subtask.id] = subtask
+            task.subtasks.append(subtask.id)
             
             # Assign the task
-            self.task_manager.assign_task(task.id, suitable_agent_id)
+            self.task_manager.assign_task(subtask.id, suitable_agent_id)
             
-            # Notify the agent
-            await self.communication_bus.publish(
-                Message(
-                    sender_id=self.office_simulation.boss_agent_id,
-                    recipient_id=suitable_agent_id,
-                    content=f"REQUEST: Please handle task {task.id}",
-                    task_id=task.id
+            # Process the task
+            if self.office_simulation.gui:
+                self.office_simulation.gui.update_task_status(
+                    f"Processing task {task.title} with agent {agent.name}"
                 )
-            )
+            
+            # Let the agent process the task
+            updated_subtask = await agent.process_task(subtask)
+            self.task_manager.tasks[subtask.id] = updated_subtask
+            
+            if self.office_simulation.gui:
+                self.office_simulation.gui.update_task_status(
+                    f"Task {task.title} completed by {agent.name}"
+                )
 
 class OfficeSimulation:
     def __init__(self):
@@ -301,10 +320,13 @@ class OfficeSimulation:
         # First, assign to the boss for delegation
         if self.boss_agent_id:
             self.task_manager.assign_task(task.id, self.boss_agent_id)
-            # The boss will delegate to appropriate team members
+            
+            # Delegate the task using AIManager
             await self.ai_manager.delegate_task(task)
+            
             # Wait for completion and consolidate results
             await self._monitor_task_completion(task.id)
+            
             # Get the final result from the boss
             final_result = await self._get_boss_summary(task.id)
             

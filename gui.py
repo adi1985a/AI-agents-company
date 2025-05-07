@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
+import asyncio
+import threading
 
 class OfficeGUI:
     def __init__(self, master, office_simulation, Agent, TaskPriority, asyncio, TaskStatus):
@@ -80,7 +82,14 @@ class OfficeGUI:
         description = self.task_description_text.get("1.0", tk.END)
         priority = self.TaskPriority[self.task_priority_combo.get()]
         
-        self.asyncio.run(self.submit_task_async(title, description, priority))
+        # Create a new event loop in a separate thread
+        def run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.submit_task_async(title, description, priority))
+        
+        thread = threading.Thread(target=run_async)
+        thread.start()
     
     async def submit_task_async(self, title, description, priority):
         result = await self.office_simulation.submit_task(title, description)
@@ -94,9 +103,9 @@ class OfficeGUI:
     
     def update_task_status(self, status):
         self.task_status_text.config(state="normal")
-        self.task_status_text.delete("1.0", tk.END)
-        self.task_status_text.insert(tk.END, status)
+        self.task_status_text.insert(tk.END, status + "\n")  # Add newline for each status
         self.task_status_text.config(state="disabled")
+        self.task_status_text.see(tk.END)  # Scroll to the latest status
     
     def update_communication_log(self, message):
         self.communication_text.config(state="normal")
@@ -112,6 +121,11 @@ def run_gui(office_simulation, Agent, TaskPriority, asyncio, TaskStatus):
     agent_info = "\n".join([f"{agent.name} ({agent.role}): {agent.skills}" for agent in office_simulation.agents.values()])
     gui.update_agent_info(agent_info)
     
+    # Set up periodic task status updates
+    def update_gui():
+        root.after(100, update_gui)  # Schedule next update
+    
+    update_gui()  # Start the update loop
     root.mainloop()
 
 if __name__ == '__main__':
