@@ -1,0 +1,4 @@
+matplotlib>=3.5.0
+# Opcjonalne zależności:
+# openai>=1.0.0  # Odkomentuj jeśli chcesz używać OpenAI API
+# llama-cpp-python>=0.2.0  # Odkomentuj jeśli chcesz używać lokalnego modelu Llama 
