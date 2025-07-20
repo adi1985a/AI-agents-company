@@ -249,18 +249,31 @@ class CodeResultsWindow:
                     break
             
             print(f"DEBUG: show_code - integrator_id: {integrator_id}")
+            print(f"DEBUG: show_code - task.results keys: {list(task.results.keys())}")
             
             qwen3_code = None
             if integrator_id and integrator_id in task.results:
-                result = task.results[integrator_id]
-                print(f"DEBUG: show_code - Integrator result: {result[:500]}...")  # First 500 chars
-                if "=== QWEN3 FINAL CODE ===" in result:
-                    qwen3_code = result.split("=== QWEN3 FINAL CODE ===", 1)[1]
+                integrator_result = task.results[integrator_id]
+                print(f"DEBUG: show_code - Integrator result: {integrator_result[:500]}...")  # First 500 chars
+                if "=== QWEN3 FINAL CODE ===" in integrator_result:
+                    qwen3_code = integrator_result.split("=== QWEN3 FINAL CODE ===", 1)[1]
                     print(f"DEBUG: show_code - Found QWEN3 code block: {qwen3_code[:200]}...")  # First 200 chars
                 else:
                     print(f"DEBUG: show_code - No QWEN3 FINAL CODE block found in Integrator result")
             else:
                 print(f"DEBUG: show_code - No Integrator result found")
+                # Sprawdź czy Integrator ma inne ID
+                for agent_id, result in task.results.items():
+                    if agent_id in self.office_simulation.agents:
+                        agent = self.office_simulation.agents[agent_id]
+                        if agent.role == "Integrator (Coordinator)":
+                            integrator_id = agent_id
+                            integrator_result = result
+                            print(f"DEBUG: show_code - Found Integrator with different ID: {integrator_id}")
+                            if "=== QWEN3 FINAL CODE ===" in integrator_result:
+                                qwen3_code = integrator_result.split("=== QWEN3 FINAL CODE ===", 1)[1]
+                                print(f"DEBUG: show_code - Found QWEN3 code block: {qwen3_code[:200]}...")
+                            break
             if qwen3_code:
                 html = self._extract_qwen3_block(qwen3_code, "HTML CODE")
                 css = self._extract_qwen3_block(qwen3_code, "CSS CODE")
@@ -284,26 +297,28 @@ class CodeResultsWindow:
                     self.html_text.insert("1.0", "No code found from any CODER agents (Alex Carter, Chris Nguyen, Riley Fox)")
                 return
             combined_response = "\n\n".join([f"=== {name} ===\n{result}" for name, result in coder_responses])
+            
+            # Poprawione wyodrębnianie kodu HTML, CSS i JS
             html_code = self._extract_html(combined_response)
-            if html_code and html_code != "<!-- HTML code not found -->":
-                if hasattr(self, 'html_text') and self.html_text.winfo_exists():
-                    self.html_text.insert("1.0", html_code)
-            else:
-                if hasattr(self, 'html_text') and self.html_text.winfo_exists():
-                    self.html_text.insert("1.0", "<!-- HTML code not found in CODER responses -->")
             css_code = self._extract_css(combined_response)
-            if css_code and css_code != "/* CSS code not found */":
-                if hasattr(self, 'css_text') and self.css_text.winfo_exists():
-                    self.css_text.insert("1.0", css_code)
-            else:
-                if hasattr(self, 'css_text') and self.css_text.winfo_exists():
-                    self.css_text.insert("1.0", "/* CSS code not found in CODER responses */")
             js_code = self._extract_js(combined_response)
-            if js_code and js_code != "// JavaScript code not found":
-                if hasattr(self, 'js_text') and self.js_text.winfo_exists():
+            
+            if hasattr(self, 'html_text') and self.html_text.winfo_exists():
+                if html_code and html_code != "<!-- HTML code not found -->":
+                    self.html_text.insert("1.0", html_code)
+                else:
+                    self.html_text.insert("1.0", "<!-- HTML code not found in CODER responses -->")
+            
+            if hasattr(self, 'css_text') and self.css_text.winfo_exists():
+                if css_code and css_code != "/* CSS code not found */":
+                    self.css_text.insert("1.0", css_code)
+                else:
+                    self.css_text.insert("1.0", "/* CSS code not found in CODER responses */")
+            
+            if hasattr(self, 'js_text') and self.js_text.winfo_exists():
+                if js_code and js_code != "// JavaScript code not found":
                     self.js_text.insert("1.0", js_code)
-            else:
-                if hasattr(self, 'js_text') and self.js_text.winfo_exists():
+                else:
                     self.js_text.insert("1.0", "// JavaScript code not found in CODER responses")
         except Exception as e:
             try:
@@ -315,10 +330,51 @@ class CodeResultsWindow:
     def _extract_qwen3_block(self, response, block_name):
         """Wyodrębnia blok kodu (HTML CODE, CSS CODE, JAVASCRIPT CODE) z odpowiedzi Qwen3"""
         import re
-        pattern = rf"=== {block_name} ===\s*([\s\S]*?)(?===|$)"
-        match = re.search(pattern, response)
-        if match:
-            return match.group(1).strip()
+        
+        # Różne wzorce dla bloków kodu
+        patterns = [
+            rf"=== {block_name} ===\s*([\s\S]*?)(?===|$)",
+            rf"=== {block_name} ===\s*([\s\S]*?)(?=###|$)",
+            rf"=== {block_name} ===\s*([\s\S]*?)(?=```|$)",
+            rf"=== {block_name} ===\s*([\s\S]*?)(?=IMPORTANT|$)"
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, response, re.IGNORECASE)
+            if match:
+                code_block = match.group(1).strip()
+                # Usuń nadmiarowe znaki nowej linii na początku i końcu
+                code_block = code_block.strip()
+                if code_block:
+                    return code_block
+        
+        # Jeśli nie znaleziono wzorca, spróbuj znaleźć kod po tagach
+        if block_name == "HTML CODE":
+            # Szukaj HTML po tagach <!DOCTYPE lub <html
+            html_start = response.find("<!DOCTYPE")
+            if html_start == -1:
+                html_start = response.find("<html")
+            if html_start != -1:
+                html_end = response.find("</html>", html_start)
+                if html_end != -1:
+                    return response[html_start:html_end + 7].strip()
+        
+        elif block_name == "CSS CODE":
+            # Szukaj CSS w tagach <style>
+            style_start = response.find("<style>")
+            if style_start != -1:
+                style_end = response.find("</style>", style_start)
+                if style_end != -1:
+                    return response[style_start + 7:style_end].strip()
+        
+        elif block_name == "JAVASCRIPT CODE":
+            # Szukaj JS w tagach <script>
+            script_start = response.find("<script>")
+            if script_start != -1:
+                script_end = response.find("</script>", script_start)
+                if script_end != -1:
+                    return response[script_start + 8:script_end].strip()
+        
         return None
     
     def _extract_html(self, response):
@@ -479,6 +535,7 @@ class OfficeGUI:
     def __init__(self, master, office_simulation, Agent, TaskPriority, asyncio, TaskStatus):
         self.master = master
         self.master.title("AI Agents Company Simulation")
+        self.master.geometry("1700x1100")  # EVEN BIGGER WINDOW
         self.office_simulation = office_simulation
         self.Agent = Agent
         self.TaskPriority = TaskPriority
@@ -495,14 +552,9 @@ class OfficeGUI:
         
         self.results_window = None
         self.code_results_window = None
-        self.setup_ui()
-        if MATPLOTLIB_AVAILABLE:
-            self.setup_charts()
-            self.setup_task_status_chart() # Initialize the new chart window
-        else:
-            self.chart_window = None
+        self.results_notebook = None  # Dodamy notebook na wyniki/kod
         
-        # Communication Log Frame
+        # Communication Log Frame - musi być przed setup_ui()
         self.communication_frame = ttk.LabelFrame(self.master, text="Communication Log")
         self.communication_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
         
@@ -512,16 +564,39 @@ class OfficeGUI:
         self.communication_frame.columnconfigure(0, weight=1)
         self.communication_frame.rowconfigure(0, weight=1)
         
+        # Conference Room Frame - nowa sekcja
+        self.conference_frame = ttk.LabelFrame(self.master, text="Conference Room")
+        self.conference_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        
+        self.conference_text = scrolledtext.ScrolledText(self.conference_frame, width=100, height=8, state="disabled", font=("Consolas", 9))
+        self.conference_text.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        
+        self.conference_frame.columnconfigure(0, weight=1)
+        self.conference_frame.rowconfigure(0, weight=1)
+        
         # Configure grid weights
         self.master.columnconfigure(0, weight=1)
         self.master.columnconfigure(1, weight=1)
         self.master.rowconfigure(0, weight=1)
         self.master.rowconfigure(1, weight=1)
         self.master.rowconfigure(2, weight=1)
+        self.master.rowconfigure(3, weight=1)
+        self.master.rowconfigure(5, weight=2) # Nowa linia dla notebook
+        
+        self.setup_ui()
+        if MATPLOTLIB_AVAILABLE:
+            self.setup_charts()
+            self.setup_task_status_chart() # Initialize the new chart window
+        else:
+            self.chart_window = None
         
         # Add startup message to Communication Log
         self.update_communication_log("🚀 AI Agents Company program has been started")
         self.update_communication_log("👥 Initializing agents...")
+        
+        # Add startup message to Conference Room
+        self.update_conference_room("🎤 Conference Room opened - agents can communicate here")
+        self.update_conference_room("💬 Watch agents discuss tasks and collaborate in real-time")
     
     def setup_charts(self):
         if not MATPLOTLIB_AVAILABLE:
@@ -551,10 +626,18 @@ class OfficeGUI:
         agent_times = list(self.agent_work_time.values())
         colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#a8e6cf', '#dcedc1', '#ffd3b6', '#ffaaa5', '#ff8b94']
         
-        # Debug info
-        print(f"DEBUG: update_charts - agent_names: {agent_names}")
-        print(f"DEBUG: update_charts - agent_times: {agent_times}")
-        print(f"DEBUG: update_charts - sum(agent_times): {sum(agent_times)}")
+        # Debug info - tylko w terminalu, nie w Communication Log
+        debug_msg1 = f"DEBUG: update_charts - agent_names: {agent_names}"
+        debug_msg2 = f"DEBUG: update_charts - agent_times: {agent_times}"
+        debug_msg3 = f"DEBUG: update_charts - sum(agent_times): {sum(agent_times)}"
+        debug_msg4 = f"DEBUG: update_charts - working_agents: {self.working_agents}"
+        debug_msg5 = f"DEBUG: update_charts - agent_start_time: {self.agent_start_time}"
+        print(debug_msg1)
+        print(debug_msg2)
+        print(debug_msg3)
+        print(debug_msg4)
+        print(debug_msg5)
+        # Usuń logi debugów z Communication Log - tylko w terminalu
         
         if agent_names and sum(agent_times) > 0:
             total_time = sum(agent_times)
@@ -614,32 +697,61 @@ class OfficeGUI:
         self.start_agent_work(agent_name)
     
     def start_agent_work(self, agent_name):
-        """Rozpoczyna liczenie czasu pracy dla agenta"""
-        if agent_name not in self.working_agents:
-            self.agent_start_time[agent_name] = time.time()
+        """Start counting work time for an agent"""
+        try:
+            current_time = time.time()
+            self.agent_start_time[agent_name] = current_time
             self.working_agents.add(agent_name)
-            msg = f"🟢 START: {agent_name} rozpoczął pracę o {self.agent_start_time[agent_name]:.2f}"
-            print(msg)
-            self.update_task_status(msg)
+            
             # Debug info
-            print(f"DEBUG: start_agent_work - {agent_name} added to working_agents: {self.working_agents}")
-            print(f"DEBUG: start_agent_work - agent_start_time: {self.agent_start_time}")
+            debug_msg1 = f"DEBUG: start_agent_work - {agent_name} added to working_agents: {self.working_agents}"
+            debug_msg2 = f"DEBUG: start_agent_work - agent_start_time: {self.agent_start_time}"
+            debug_msg3 = f"DEBUG: start_agent_work - agent_work_time: {self.agent_work_time}"
+            print(debug_msg1)
+            print(debug_msg2)
+            print(debug_msg3)
+            
+            # Update charts if available
+            if hasattr(self, 'update_charts'):
+                self.update_charts(0)
+            if hasattr(self, 'update_task_status_chart'):
+                self.update_task_status_chart()
+                
+        except Exception as e:
+            print(f"Error starting agent work: {e}")
     
     def stop_agent_work(self, agent_name):
-        """Kończy liczenie czasu pracy dla agenta"""
-        if agent_name in self.working_agents:
+        """Stop counting work time for an agent"""
+        try:
             if agent_name in self.agent_start_time:
-                work_duration = time.time() - self.agent_start_time[agent_name]
+                end_time = time.time()
+                start_time = self.agent_start_time[agent_name]
+                work_duration = end_time - start_time
+                
+                # Add to total work time
+                if agent_name not in self.agent_work_time:
+                    self.agent_work_time[agent_name] = 0
                 self.agent_work_time[agent_name] += work_duration
-                msg = f"🔴 STOP: {agent_name} zakończył pracę, czas: {work_duration:.2f}s, suma: {self.agent_work_time[agent_name]:.2f}s"
-                print(msg)
-                self.update_task_status(msg)
-            self.working_agents.discard(agent_name)
-            if agent_name in self.agent_start_time:
-                del self.agent_start_time[agent_name]
-            # Debug info
-            print(f"DEBUG: stop_agent_work - {agent_name} removed from working_agents: {self.working_agents}")
-            print(f"DEBUG: stop_agent_work - agent_work_time: {self.agent_work_time}")
+                
+                # Remove from working agents
+                self.working_agents.discard(agent_name)
+                
+                # Debug info
+                debug_msg1 = f"DEBUG: stop_agent_work - {agent_name} work duration: {work_duration:.2f}s"
+                debug_msg2 = f"DEBUG: stop_agent_work - Total work time for {agent_name}: {self.agent_work_time[agent_name]:.2f}s"
+                debug_msg3 = f"DEBUG: stop_agent_work - Working agents: {self.working_agents}"
+                print(debug_msg1)
+                print(debug_msg2)
+                print(debug_msg3)
+                
+                # Update charts if available
+                if hasattr(self, 'update_charts'):
+                    self.update_charts(0)
+                if hasattr(self, 'update_task_status_chart'):
+                    self.update_task_status_chart()
+                    
+        except Exception as e:
+            print(f"Error stopping agent work: {e}")
     
     def update_work_time(self):
         """Aktualizuje czas pracy dla aktualnie pracujących agentów"""
@@ -690,72 +802,43 @@ class OfficeGUI:
     def setup_ui(self):
         # Task Submission Frame
         task_frame = ttk.LabelFrame(self.master, text="Task Submission")
-        task_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        
+        task_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        self.master.rowconfigure(0, weight=0)
         ttk.Label(task_frame, text="Title:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.task_title_entry = ttk.Entry(task_frame, width=40)
+        self.task_title_entry = ttk.Entry(task_frame, width=60)
         self.task_title_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
         ttk.Label(task_frame, text="Description:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.task_description_text = scrolledtext.ScrolledText(task_frame, width=40, height=5)
+        self.task_description_text = scrolledtext.ScrolledText(task_frame, width=60, height=7)
         self.task_description_text.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
         ttk.Label(task_frame, text="Priority:").grid(row=2, column=0, padx=5, pady=5, sticky="w")
-        self.task_priority_combo = ttk.Combobox(task_frame, values=[e.name for e in self.TaskPriority], state="readonly")
+        self.task_priority_combo = ttk.Combobox(task_frame, values=[e.name for e in self.TaskPriority], state="readonly", width=20)
         self.task_priority_combo.set(self.TaskPriority.MEDIUM.name)
         self.task_priority_combo.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
-        
         self.submit_button = ttk.Button(task_frame, text="Submit Task", command=self.submit_task)
-        self.submit_button.grid(row=3, column=1, padx=5, pady=5, sticky="e")
-        
+        self.submit_button.grid(row=3, column=1, padx=5, pady=10, sticky="e")
         # Agent Information Frame
         agent_frame = ttk.LabelFrame(self.master, text="Agent Information")
         agent_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nsew")
         agent_frame.columnconfigure(0, weight=1)
         agent_frame.columnconfigure(1, weight=2)
         agent_frame.rowconfigure(2, weight=1)
-
-        # Lista agentów
-        self.agent_listbox = tk.Listbox(agent_frame, width=25, font=("Arial", 11), exportselection=False)
+        self.agent_listbox = tk.Listbox(agent_frame, width=35, font=("Arial", 11), exportselection=False)
         self.agent_listbox.grid(row=0, column=0, rowspan=3, padx=(8, 8), pady=8, sticky="ns")
-
-        # Etykieta roli agenta (na środku nad umiejętnościami)
         self.agent_role_label = tk.Label(agent_frame, text="", font=("Arial", 12, "bold"), bg="#f0f4ff", anchor="center")
         self.agent_role_label.grid(row=0, column=1, padx=5, pady=(10, 2), sticky="ew")
-
-        # Ramka na umiejętności
         skills_frame = tk.Frame(agent_frame, bg="#e6e6e6", bd=1, relief="solid")
         skills_frame.grid(row=1, column=1, padx=5, pady=(0, 8), sticky="nsew")
         skills_frame.rowconfigure(0, weight=1)
         skills_frame.columnconfigure(0, weight=1)
-
-        self.skills_listbox = tk.Listbox(skills_frame, width=35, font=("Arial", 11), bd=0, highlightthickness=0)
+        self.skills_listbox = tk.Listbox(skills_frame, width=45, font=("Arial", 11), bd=0, highlightthickness=0)
         self.skills_listbox.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
-        
         agent_frame.rowconfigure(1, weight=1)
         agent_frame.rowconfigure(2, weight=1)
-
-        # Kolory dla ról
-        self.agent_colors = {}
-        for agent in self.office_simulation.agents.values():
-            if agent.role.lower() in ["ceo", "boss", "szef"]:
-                self.agent_colors[agent.name] = "#FFD700"  # złoty
-            elif "web" in agent.role.lower() or "developer" in agent.role.lower():
-                self.agent_colors[agent.name] = "#87CEEB"  # niebieski
-            elif "analyst" in agent.role.lower() or "programmer" in agent.role.lower():
-                self.agent_colors[agent.name] = "#90EE90"  # zielony
-            elif "image" in agent.role.lower() or "generator" in agent.role.lower():
-                self.agent_colors[agent.name] = "#FFB6C1"  # różowy
-            elif "text" in agent.role.lower():
-                self.agent_colors[agent.name] = "#E6E6FA"  # fioletowy
-            else:
-                self.agent_colors[agent.name] = "#F0F0F0"  # szary
-
-        # Wypełnij listę agentów
+        # Fill agent list
         self.agent_names = [agent.name for agent in self.office_simulation.agents.values()]
+        self.agent_listbox.delete(0, tk.END)
         for name in self.agent_names:
             self.agent_listbox.insert(tk.END, name)
-
         def show_skills(event):
             selection = self.agent_listbox.curselection()
             if selection:
@@ -765,71 +848,66 @@ class OfficeGUI:
                 self.skills_listbox.delete(0, tk.END)
                 for skill in agent.skills:
                     self.skills_listbox.insert(tk.END, skill)
-                self.skills_listbox.config(bg=self.agent_colors[agent_name])
-                # Rola na środku, pogrubiona
-                self.agent_role_label.config(text=f"Rola: {agent.role}")
+                self.skills_listbox.config(bg="#e6e6e6")
+                self.agent_role_label.config(text=f"Role: {agent.role}")
         self.agent_listbox.bind("<<ListboxSelect>>", show_skills)
-
-        # Domyślnie pokaż umiejętności pierwszego agenta
         if self.agent_names:
             self.agent_listbox.selection_set(0)
             self.agent_listbox.event_generate("<<ListboxSelect>>")
-
-        # Usuwam stary widget agent_info_text
-        # self.agent_info_text = scrolledtext.ScrolledText(agent_frame, width=50, height=10, state="disabled")
-        # self.agent_info_text.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        
         # Task Status Frame
         task_status_frame = ttk.LabelFrame(self.master, text="Task Status")
         task_status_frame.grid(row=0, column=1, rowspan=2, padx=10, pady=10, sticky="nsew")
-        
-        # Task Status Text with improved scrollbar configuration
         self.task_status_text = scrolledtext.ScrolledText(
             task_status_frame, 
-            width=50, 
-            height=20, 
+            width=60, 
+            height=25, 
             wrap=tk.WORD,
-            font=("Consolas", 9)
+            font=("Consolas", 10)
         )
         self.task_status_text.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        
-        # Grid configuration for better scrolling
         task_status_frame.columnconfigure(0, weight=1)
         task_status_frame.rowconfigure(0, weight=1)
-        
         # Task List Frame
         task_list_frame = ttk.LabelFrame(self.master, text="Task List")
-        task_list_frame.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
-        
+        task_list_frame.grid(row=2, column=1, padx=10, pady=10, sticky="nsew")
         self.task_list = TaskListFrame(task_list_frame, self.office_simulation)
         self.task_list.pack(fill=tk.BOTH, expand=True)
-        
-        # Save/Load state buttons
-        button_frame = ttk.Frame(self.master)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=5, sticky="ew")
-        save_btn = ttk.Button(button_frame, text="Save State", command=self.save_state)
-        save_btn.grid(row=0, column=0, padx=5)
-        load_btn = ttk.Button(button_frame, text="Load State", command=self.load_state)
-        load_btn.grid(row=0, column=1, padx=5)
-        results_btn = ttk.Button(button_frame, text="Show Results", command=self.show_results)
-        results_btn.grid(row=0, column=2, padx=5)
-        code_btn = ttk.Button(button_frame, text="Show Code", command=self.show_code)
-        code_btn.grid(row=0, column=3, padx=5)
-        charts_btn = ttk.Button(button_frame, text="Show Charts", command=self.show_charts)
-        charts_btn.grid(row=0, column=4, padx=5)
-        task_status_btn = ttk.Button(button_frame, text="Show Task Status Chart", command=self.show_task_status_chart)
-        task_status_btn.grid(row=0, column=6, padx=5)
-        reset_btn = ttk.Button(button_frame, text="Reset Work Time", command=self.reset_work_time)
-        reset_btn.grid(row=0, column=5, padx=5)
-        
-        # Przyciski agentów
-        agent_buttons_frame = ttk.Frame(self.master)
-        agent_buttons_frame.grid(row=4, column=0, columnspan=2, pady=5, sticky="ew")
-        
-        # Przyciski dla każdego agenta z odpowiednimi ikonami
+        # Results & Code section
+        self.results_frame = ttk.LabelFrame(self.master, text="Results & Code")
+        self.results_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        self.master.rowconfigure(3, weight=2)
+        self.results_notebook = ttk.Notebook(self.results_frame)
+        self.results_notebook.pack(fill=tk.BOTH, expand=True)
+        self.results_text = scrolledtext.ScrolledText(self.results_notebook, wrap=tk.WORD, font=("Consolas", 11), height=22, width=120)
+        self.results_notebook.add(self.results_text, text="Results")
+        self.html_text = scrolledtext.ScrolledText(self.results_notebook, wrap=tk.WORD, font=("Consolas", 10), height=22, width=120)
+        self.results_notebook.add(self.html_text, text="HTML")
+        self.css_text = scrolledtext.ScrolledText(self.results_notebook, wrap=tk.WORD, font=("Consolas", 10), height=22, width=120)
+        self.results_notebook.add(self.css_text, text="CSS")
+        self.js_text = scrolledtext.ScrolledText(self.results_notebook, wrap=tk.WORD, font=("Consolas", 10), height=22, width=120)
+        self.results_notebook.add(self.js_text, text="JavaScript")
+        self.reports_text = scrolledtext.ScrolledText(self.results_notebook, wrap=tk.WORD, font=("Consolas", 10), height=22, width=120)
+        self.results_notebook.add(self.reports_text, text="Reports")
+        # Conference Room Frame - moved below Results & Code
+        self.conference_frame = ttk.LabelFrame(self.master, text="Conference Room")
+        self.conference_frame.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+        self.conference_text = scrolledtext.ScrolledText(self.conference_frame, width=100, height=16, state="disabled", font=("Consolas", 9))
+        self.conference_text.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        self.conference_frame.columnconfigure(0, weight=1)
+        self.conference_frame.rowconfigure(0, weight=1)
+        self.master.rowconfigure(4, weight=2)
+        # Agent buttons - scrollable frame under Task List
+        agent_buttons_outer = ttk.Frame(self.master)
+        agent_buttons_outer.grid(row=5, column=0, columnspan=2, pady=5, sticky="ew")
+        agent_buttons_canvas = tk.Canvas(agent_buttons_outer, height=40)
+        agent_buttons_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        agent_buttons_scroll = ttk.Scrollbar(agent_buttons_outer, orient=tk.HORIZONTAL, command=agent_buttons_canvas.xview)
+        agent_buttons_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        agent_buttons_canvas.configure(xscrollcommand=agent_buttons_scroll.set)
+        agent_buttons_inner = ttk.Frame(agent_buttons_canvas)
+        agent_buttons_canvas.create_window((0, 0), window=agent_buttons_inner, anchor="nw")
         self.agent_buttons = {}
         for i, (agent_id, agent) in enumerate(self.office_simulation.agents.items()):
-            # Wybierz ikonę na podstawie roli agenta
             if agent.role.lower() in ["ceo", "boss", "szef", "integrator", "coordinator"]:
                 icon = "👑"
             elif agent.role.lower() in ["web developer", "developer", "coder", "programista", "hosting", "devops", "mobile"]:
@@ -850,26 +928,45 @@ class OfficeGUI:
                 icon = "🔍"
             else:
                 icon = "👤"
-            
-            btn = ttk.Button(agent_buttons_frame, text=f"{icon} {agent.name}", 
-                           command=lambda a=agent: self.show_agent_view(a))
+            btn = ttk.Button(agent_buttons_inner, text=f"{icon} {agent.name}", command=lambda a=agent: self.show_agent_view(a), width=22)
             btn.grid(row=0, column=i, padx=5)
             self.agent_buttons[agent_id] = btn
-        
-        # Configure grid weights
+        agent_buttons_inner.update_idletasks()
+        agent_buttons_canvas.config(scrollregion=agent_buttons_canvas.bbox("all"))
+        # Buttons row (Save State etc.) at the very bottom
+        button_frame = ttk.Frame(self.master)
+        button_frame.grid(row=6, column=0, columnspan=2, pady=10, sticky="ew")
+        save_btn = ttk.Button(button_frame, text="Save State", command=self.save_state)
+        save_btn.grid(row=0, column=0, padx=5)
+        load_btn = ttk.Button(button_frame, text="Load State", command=self.load_state)
+        load_btn.grid(row=0, column=1, padx=5)
+        results_btn = ttk.Button(button_frame, text="Show Results", command=self.show_results_in_main)
+        results_btn.grid(row=0, column=2, padx=5)
+        code_btn = ttk.Button(button_frame, text="Show Code", command=self.show_code_in_main)
+        code_btn.grid(row=0, column=3, padx=5)
+        charts_btn = ttk.Button(button_frame, text="Show Charts", command=self.show_charts)
+        charts_btn.grid(row=0, column=4, padx=5)
+        task_status_btn = ttk.Button(button_frame, text="Show Task Status Chart", command=self.show_task_status_chart)
+        task_status_btn.grid(row=0, column=7, padx=5)
+        reset_btn = ttk.Button(button_frame, text="Reset Work Time", command=self.reset_work_time)
+        reset_btn.grid(row=0, column=5, padx=5)
+        conference_clear_btn = ttk.Button(button_frame, text="Clear Conference Room", command=self.clear_conference_room)
+        conference_clear_btn.grid(row=0, column=6, padx=5)
         self.master.columnconfigure(0, weight=1)
         self.master.columnconfigure(1, weight=1)
-        self.master.rowconfigure(0, weight=1)
+        self.master.rowconfigure(0, weight=0)
         self.master.rowconfigure(1, weight=1)
         self.master.rowconfigure(2, weight=1)
+        self.master.rowconfigure(3, weight=2)
+        self.master.rowconfigure(4, weight=1)
+        self.master.rowconfigure(5, weight=0)
+        self.master.rowconfigure(6, weight=0)
         task_frame.columnconfigure(1, weight=1)
         agent_frame.columnconfigure(0, weight=1)
         task_status_frame.columnconfigure(0, weight=1)
         task_status_frame.rowconfigure(0, weight=1)
-        
-        # Dodaj obsługę resize dla lepszego scrollowania
         self.master.bind('<Configure>', self.on_resize)
-    
+
     def submit_task(self):
         title = self.task_title_entry.get()
         description = self.task_description_text.get("1.0", tk.END)
@@ -968,26 +1065,74 @@ class OfficeGUI:
     
     def update_communication_log(self, message):
         try:
+            # Sprawdź czy widget istnieje
+            if not hasattr(self, 'communication_text') or not self.communication_text.winfo_exists():
+                print(f"DEBUG: communication_text not available: {message}")
+                return
+                
             # Dodaj timestamp
             import datetime
             timestamp = datetime.datetime.now().strftime("%H:%M:%S")
             
-            self.communication_text.config(state="normal")
-            self.communication_text.insert(tk.END, f"[{timestamp}] {message}\n")
-            self.communication_text.config(state="disabled")
-            self.communication_text.see(tk.END)
-            
-            # Animacja przy komunikacji
-            self.animate_communication()
+            # Filtruj wiadomości - pokazuj tylko najważniejsze w Communication Log
+            if any(keyword in message for keyword in [
+                "💭", "<think>", "🚀", "✅", "🔄", "📋", "📝", "🎉", "🤖"
+            ]):
+                # To są ważne logi - pokaż w Communication Log
+                self.communication_text.config(state="normal")
+                self.communication_text.insert(tk.END, f"[{timestamp}] {message}\n")
+                self.communication_text.config(state="disabled")
+                self.communication_text.see(tk.END)
+                
+                # Animacja przy komunikacji
+                self.animate_communication()
+            else:
+                # To są debugi - pokaż tylko w terminalu
+                print(f"TERMINAL: {message}")
             
         except Exception as e:
             print(f"Błąd podczas aktualizacji Communication Log: {e}")
+            # Jeśli widget nie istnieje, spróbuj go utworzyć
+            try:
+                if not hasattr(self, 'communication_frame'):
+                    self.communication_frame = ttk.LabelFrame(self.master, text="Communication Log")
+                    self.communication_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+                
+                if not hasattr(self, 'communication_text') or not self.communication_text.winfo_exists():
+                    self.communication_text = scrolledtext.ScrolledText(self.communication_frame, width=100, height=10, state="disabled")
+                    self.communication_text.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+                    
+                    self.communication_frame.columnconfigure(0, weight=1)
+                    self.communication_frame.rowconfigure(0, weight=1)
+                    
+                    # Spróbuj ponownie dodać wiadomość
+                    self.communication_text.config(state="normal")
+                    self.communication_text.insert(tk.END, f"[{timestamp}] {message}\n")
+                    self.communication_text.config(state="disabled")
+                    self.communication_text.see(tk.END)
+            except Exception as e2:
+                print(f"Nie udało się utworzyć communication_text: {e2}")
     
     def animate_communication(self):
         # Animacja - podświetlenie komunikacji
         original_bg = self.communication_text.cget("bg")
         self.communication_text.config(bg="lightblue")
         self.master.after(300, lambda: self.communication_text.config(bg=original_bg))
+
+    def update_conference_room(self, message):
+        print(f"DEBUG: update_conference_room wywołane z message: {message}")
+        try:
+            if not hasattr(self, 'conference_text') or not self.conference_text.winfo_exists():
+                print(f"DEBUG: conference_text not available: {message}")
+                return
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+            self.conference_text.config(state="normal")
+            self.conference_text.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.conference_text.config(state="disabled")
+            self.conference_text.see(tk.END)
+        except Exception as e:
+            print(f"Błąd podczas aktualizacji Conference Room: {e}")
 
     def save_state(self):
         filename = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files", "*.json")])
@@ -1037,13 +1182,92 @@ class OfficeGUI:
         # Show window with code generated by CODER agents
         completed_tasks = [task for task in self.office_simulation.tasks.values() if task.status == self.TaskStatus.COMPLETED]
         if completed_tasks:
-            latest_task = max(completed_tasks, key=lambda t: t.completed_at or 0)
+            # Szukaj taska z Integratorem (ma blok QWEN3 FINAL CODE)
+            integrator_task = None
+            for task in completed_tasks:
+                for agent_id, result in task.results.items():
+                    if '=== QWEN3 FINAL CODE ===' in result:
+                        integrator_task = task
+                        break
+                if integrator_task:
+                    break
+            
+            # Jeśli nie ma taska z Integratorem, weź najnowszy
+            if not integrator_task:
+                integrator_task = max(completed_tasks, key=lambda t: t.completed_at or 0)
+            
+            # DEBUG: sprawdź wszystkie completed tasks
+            print(f"DEBUG: show_code - Wszystkie completed tasks:")
+            for task in completed_tasks:
+                print(f"DEBUG: show_code - Task {task.id}: {task.title} | results keys: {list(task.results.keys())}")
+            print(f"DEBUG: show_code - Wybrany integrator_task: {integrator_task.id} | {integrator_task.title}")
+            print(f"DEBUG: show_code - Integrator task results keys: {list(integrator_task.results.keys())}")
             # Twórz nowe okno jeśli nie istnieje lub zostało zamknięte
             if not self.code_results_window or not self.code_results_window.html_text.winfo_exists():
                 self.code_results_window = CodeResultsWindow(self.master, self.office_simulation)
-            self.code_results_window.show_code(latest_task)
+            self.code_results_window.show_code(integrator_task)
         else:
             messagebox.showinfo("No Code", "There are no completed tasks with code yet.")
+
+    def show_results_in_main(self):
+        # Pokazuje wyniki w zakładce "Wyniki" (bez dodatkowego okna)
+        completed_tasks = [task for task in self.office_simulation.tasks.values() if task.status == self.TaskStatus.COMPLETED]
+        if completed_tasks:
+            latest_task = max(completed_tasks, key=lambda t: t.completed_at or 0)
+            self.results_text.config(state="normal")
+            self.results_text.delete("1.0", tk.END)
+            results_text = f"=== TASK RESULTS: {latest_task.title} ===\n\n"
+            for agent_id, result in latest_task.results.items():
+                agent_name = self.office_simulation.agents[agent_id].name if agent_id in self.office_simulation.agents else agent_id
+                results_text += f"--- {agent_name} ---\n{result}\n\n"
+            self.results_text.insert("1.0", results_text)
+            self.results_text.config(state="disabled")
+            self.results_notebook.select(self.results_text)
+        else:
+            self.results_text.config(state="normal")
+            self.results_text.delete("1.0", tk.END)
+            self.results_text.insert("1.0", "Brak ukończonych zadań.")
+            self.results_text.config(state="disabled")
+            self.results_notebook.select(self.results_text)
+
+    def show_code_in_main(self):
+        # Pokazuje kod w zakładkach HTML/CSS/JS (bez dodatkowego okna)
+        completed_tasks = [task for task in self.office_simulation.tasks.values() if task.status == self.TaskStatus.COMPLETED]
+        if completed_tasks:
+            integrator_task = None
+            for task in completed_tasks:
+                for agent_id, result in task.results.items():
+                    if '=== QWEN3 FINAL CODE ===' in result:
+                        integrator_task = task
+                        break
+                if integrator_task:
+                    break
+            if not integrator_task:
+                integrator_task = max(completed_tasks, key=lambda t: t.completed_at or 0)
+            # Szukaj kodu QWEN3 FINAL CODE
+            qwen3_code = None
+            for agent_id, result in integrator_task.results.items():
+                if '=== QWEN3 FINAL CODE ===' in result:
+                    qwen3_code = result.split('=== QWEN3 FINAL CODE ===', 1)[1]
+                    break
+            if qwen3_code:
+                html = self._extract_qwen3_block(qwen3_code, "HTML CODE")
+                css = self._extract_qwen3_block(qwen3_code, "CSS CODE")
+                js = self._extract_qwen3_block(qwen3_code, "JAVASCRIPT CODE")
+                self.html_text.config(state="normal"); self.html_text.delete("1.0", tk.END); self.html_text.insert("1.0", html or "<!-- Brak kodu HTML -->"); self.html_text.config(state="disabled")
+                self.css_text.config(state="normal"); self.css_text.delete("1.0", tk.END); self.css_text.insert("1.0", css or "/* Brak kodu CSS */"); self.css_text.config(state="disabled")
+                self.js_text.config(state="normal"); self.js_text.delete("1.0", tk.END); self.js_text.insert("1.0", js or "// Brak kodu JS"); self.js_text.config(state="disabled")
+                self.results_notebook.select(self.html_text)
+            else:
+                self.html_text.config(state="normal"); self.html_text.delete("1.0", tk.END); self.html_text.insert("1.0", "Brak kodu HTML w wynikach."); self.html_text.config(state="disabled")
+                self.css_text.config(state="normal"); self.css_text.delete("1.0", tk.END); self.css_text.insert("1.0", "Brak kodu CSS w wynikach."); self.css_text.config(state="disabled")
+                self.js_text.config(state="normal"); self.js_text.delete("1.0", tk.END); self.js_text.insert("1.0", "Brak kodu JS w wynikach."); self.js_text.config(state="disabled")
+                self.results_notebook.select(self.html_text)
+        else:
+            self.html_text.config(state="normal"); self.html_text.delete("1.0", tk.END); self.html_text.insert("1.0", "Brak ukończonych zadań z kodem."); self.html_text.config(state="disabled")
+            self.css_text.config(state="normal"); self.css_text.delete("1.0", tk.END); self.css_text.insert("1.0", "Brak ukończonych zadań z kodem."); self.css_text.config(state="disabled")
+            self.js_text.config(state="normal"); self.js_text.delete("1.0", tk.END); self.js_text.insert("1.0", "Brak ukończonych zadań z kodem."); self.js_text.config(state="disabled")
+            self.results_notebook.select(self.html_text)
 
     def reset_work_time(self):
         """Reset the work time for all agents to 0."""
@@ -1057,6 +1281,16 @@ class OfficeGUI:
         if hasattr(self, 'update_task_status_chart'):
             self.update_task_status_chart()
 
+    def clear_conference_room(self):
+        """Clear conference room messages"""
+        try:
+            self.conference_text.config(state="normal")
+            self.conference_text.delete("1.0", tk.END)
+            self.conference_text.config(state="disabled")
+            self.update_communication_log("🗑️ Conference Room cleared")
+        except Exception as e:
+            print(f"Error clearing conference room: {e}")
+
     def bring_to_front(self):
         """Bring the main window to front and focus"""
         try:
@@ -1068,98 +1302,74 @@ class OfficeGUI:
             print(f"Error bringing window to front: {e}")
     
     def show_agent_view(self, agent):
-        """Show specific agent view"""
+        """Show agent details and tasks in the 'Reports' tab instead of a popup window"""
         try:
-            # Create new window for agent
-            agent_window = tk.Toplevel(self.master)
-            agent_window.title(f"Agent View: {agent.name}")
-            agent_window.geometry("800x600")
-            
-            # Agent information
-            info_frame = ttk.LabelFrame(agent_window, text="Agent Information")
-            info_frame.pack(fill=tk.X, padx=10, pady=5)
-            
-            info_text = f"Name: {agent.name}\n"
-            info_text += f"Role: {agent.role}\n"
-            info_text += f"Skills: {', '.join(agent.skills)}\n"
-            info_text += f"Traits: {', '.join(agent.personality_traits)}\n"
-            info_text += f"Tools: {', '.join(agent.preferred_tools)}"
-            
-            ttk.Label(info_frame, text=info_text, justify=tk.LEFT).pack(padx=5, pady=5)
-            
-            # Special view for CEO/Integrator
+            report = f"=== Agent Information ===\n"
+            report += f"Name: {agent.name}\n"
+            report += f"Role: {agent.role}\n"
+            report += f"Skills: {', '.join(agent.skills)}\n"
+            report += f"Traits: {', '.join(agent.personality_traits)}\n"
+            report += f"Tools: {', '.join(agent.preferred_tools)}\n\n"
+            # CEO/Integrator special view
             if agent.name == "Pat Morgan":
-                self._show_ceo_view(agent_window, agent)
+                report += self._get_ceo_report(agent)
             else:
-                # Regular agent tasks view
-                self._show_regular_agent_view(agent_window, agent)
-            
+                report += self._get_regular_agent_report(agent)
+            self.reports_text.config(state="normal")
+            self.reports_text.delete("1.0", tk.END)
+            self.reports_text.insert("1.0", report)
+            self.reports_text.config(state="disabled")
+            self.results_notebook.select(self.reports_text)
         except Exception as e:
-            print(f"Error creating agent view: {e}")
-            messagebox.showerror("Error", f"Cannot display agent view: {e}")
-    
-    def _show_ceo_view(self, window, agent):
-        """Show special Integrator view with coordination work"""
-        # Integrator Coordination Frame
-        coordination_frame = ttk.LabelFrame(window, text="Integrator Coordination Work")
-        coordination_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        coordination_text = scrolledtext.ScrolledText(coordination_frame, wrap=tk.WORD, font=("Consolas", 10))
-        coordination_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Find Integrator's work (tasks where he is the creator or has results)
+            self.reports_text.config(state="normal")
+            self.reports_text.delete("1.0", tk.END)
+            self.reports_text.insert("1.0", f"Error displaying agent view: {e}")
+            self.reports_text.config(state="disabled")
+            self.results_notebook.select(self.reports_text)
+
+    def _get_ceo_report(self, agent):
+        """Return Integrator/CEO coordination work as text"""
+        text = "\n=== Integrator Coordination Work ===\n\n"
         integrator_work = []
         for task in self.office_simulation.tasks.values():
             if task.creator_id == agent.id or agent.id in task.results:
                 integrator_work.append(task)
-        
         if integrator_work:
-            coordination_text.insert(tk.END, f"=== {agent.name} - INTEGRATOR COORDINATION WORK ===\n\n")
-            
             for task in integrator_work:
-                coordination_text.insert(tk.END, f"📋 PROJECT: {task.title}\n")
-                coordination_text.insert(tk.END, f"📄 Description: {task.description}\n")
-                coordination_text.insert(tk.END, f"🎯 Priority: {task.priority.name}\n")
-                coordination_text.insert(tk.END, f"📊 Status: {task.status.name}\n")
-                
+                text += f"📋 PROJECT: {task.title}\n"
+                text += f"📄 Description: {task.description}\n"
+                text += f"🎯 Priority: {task.priority.name}\n"
+                text += f"📊 Status: {task.status.name}\n"
                 if agent.id in task.results:
-                    coordination_text.insert(tk.END, f"\n📝 INTEGRATOR SUMMARY:\n{task.results[agent.id]}\n")
-                
-                coordination_text.insert(tk.END, "\n" + "="*50 + "\n\n")
+                    text += f"\n📝 INTEGRATOR SUMMARY:\n{task.results[agent.id]}\n"
+                text += "\n" + "="*50 + "\n\n"
         else:
-            coordination_text.insert(tk.END, f"No coordination work found for {agent.name} yet.\n")
-            coordination_text.insert(tk.END, "Integrator will coordinate tasks when projects are submitted.\n")
-        
-        coordination_text.config(state="disabled")
-    
-    def _show_regular_agent_view(self, window, agent):
-        """Show regular agent view with their tasks"""
-        # Agent tasks
-        tasks_frame = ttk.LabelFrame(window, text="Agent Tasks")
-        tasks_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        tasks_text = scrolledtext.ScrolledText(tasks_frame, wrap=tk.WORD)
-        tasks_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # Find tasks for this agent
+            text += f"No coordination work found for {agent.name} yet.\nIntegrator will coordinate tasks when projects are submitted.\n"
+        return text
+
+    def _get_regular_agent_report(self, agent):
+        """Return regular agent tasks as text"""
+        text = "\n=== Agent Tasks ===\n\n"
         agent_tasks = []
         for task in self.office_simulation.tasks.values():
             if task.assignee_id == agent.id:
                 agent_tasks.append(task)
-        
         if agent_tasks:
             for task in agent_tasks:
-                tasks_text.insert(tk.END, f"Task: {task.title}\n")
-                tasks_text.insert(tk.END, f"Status: {task.status.name}\n")
-                tasks_text.insert(tk.END, f"Description: {task.description}\n")
+                text += f"Task: {task.title}\n"
+                text += f"Status: {task.status.name}\n"
+                text += f"Description: {task.description}\n"
                 if task.results and agent.id in task.results:
-                    tasks_text.insert(tk.END, f"Result: {task.results[agent.id]}\n")
-                tasks_text.insert(tk.END, "-" * 50 + "\n\n")
+                    result = task.results[agent.id]
+                    if isinstance(result, str):
+                        text += f"Result: {result}\n"
+                    else:
+                        text += f"Result: {str(result)}\n"
+                text += "-" * 50 + "\n\n"
         else:
-            tasks_text.insert(tk.END, "No tasks for this agent.")
-        
-        tasks_text.config(state="disabled")
-    
+            text += "No tasks for this agent.\n"
+        return text
+
     def on_resize(self, event):
         """Handle window resize"""
         try:
@@ -1183,6 +1393,36 @@ class OfficeGUI:
                 self.communication_text.update_idletasks()
                 self.communication_text.see(tk.END)
                 self.communication_text.yview_moveto(1.0)
+                
+            # Refresh Conference Room scrollbar
+            if hasattr(self, 'conference_text'):
+                self.conference_text.update_idletasks()
+                self.conference_text.see(tk.END)
+                self.conference_text.yview_moveto(1.0)
+                
+            # Refresh Results & Code scrollbar
+            if hasattr(self, 'results_text'):
+                self.results_text.update_idletasks()
+                self.results_text.see(tk.END)
+                self.results_text.yview_moveto(1.0)
+            
+            # Refresh HTML tab
+            if hasattr(self, 'html_text'):
+                self.html_text.update_idletasks()
+                self.html_text.see(tk.END)
+                self.html_text.yview_moveto(1.0)
+            
+            # Refresh CSS tab
+            if hasattr(self, 'css_text'):
+                self.css_text.update_idletasks()
+                self.css_text.see(tk.END)
+                self.css_text.yview_moveto(1.0)
+            
+            # Refresh JS tab
+            if hasattr(self, 'js_text'):
+                self.js_text.update_idletasks()
+                self.js_text.see(tk.END)
+                self.js_text.yview_moveto(1.0)
                 
         except Exception as e:
             print(f"Error refreshing scrollbars: {e}")

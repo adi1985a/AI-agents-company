@@ -103,6 +103,8 @@ class OfficeSimulation:
         return None
 
     async def submit_task(self, title: str, description: str, priority: TaskPriority = TaskPriority.MEDIUM) -> str:
+        debug_msg = f"DEBUG: submit_task - Tworzenie taska: {title} | {description} | {priority}"
+        print(debug_msg)
         # 1. Client Advisor analyzes and creates a brief/spec
         client_advisor = self._find_agent_by_role("Client Advisor")
         brief_task = Task(title=f"Client Brief: {title}", description=description, creator_id="user", priority=priority)
@@ -179,7 +181,7 @@ class OfficeSimulation:
         if self.gui:
             self.gui.stop_agent_work(mobile.name)
 
-        # 6. Feedback & QA Agent
+                # 6. Feedback & QA Agent
         feedback = self._find_agent_by_role("Feedback & QA Agent")
         feedback_task = Task(title=f"Feedback & QA: {title}", description=mobile_result.results[mobile.id], creator_id=mobile.id, parent_task_id=mobile_task.id, priority=priority)
         self.tasks[feedback_task.id] = feedback_task
@@ -407,87 +409,34 @@ class OfficeSimulation:
         return None
 
     async def _consolidate_results(self, task: Task, team_results: Dict[str, str], boss: AgentBase) -> str:
-        """Boss consolidates team results into final report"""
+        debug_msg = f"DEBUG: _consolidate_results - Konsolidacja wyników przez {boss.name}"
+        print(debug_msg)
         if self.gui:
             self.gui.update_task_status(f"📊 {boss.name} consolidating team results...")
             self.gui.update_communication_log(f"[{boss.name}] 📊 Consolidating team results...")
             self.gui.start_agent_work(boss.name)
         
-        # Prepare final report
-        final_report = f"=== FINAL PROJECT REPORT ===\n\n"
-        final_report += f"Project Manager: {boss.name} (CEO)\n"
-        final_report += f"Project: {task.title}\n"
-        final_report += f"Description: {task.description}\n"
-        final_report += f"Priority: {task.priority.name}\n"
-        final_report += f"Completion Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        # DEBUG: sprawdź czy boss to Integrator
+        debug_msg1 = f"DEBUG: _consolidate_results - Boss role: {boss.role}"
+        debug_msg2 = f"DEBUG: _consolidate_results - Boss id: {boss.id}"
+        print(debug_msg1)
+        print(debug_msg2)
         
-        final_report += "=== TEAM PERFORMANCE SUMMARY ===\n"
+        final_report = await boss.process_task(task, office=self)
+        debug_msg = f"DEBUG: _consolidate_results - Wynik Integratora: {final_report[:200]}..."
+        print(debug_msg)
         
-        # Track what was completed and by whom
-        completed_tasks = []
-        team_performance = {}
-        
-        for agent_id, result in team_results.items():
-            agent_name = self.agents[agent_id].name if agent_id in self.agents else "Unknown agent"
-            agent_role = self.agents[agent_id].role if agent_id in self.agents else "Unknown role"
-            
-            final_report += f"\n--- {agent_name} ({agent_role}) ---\n"
-            final_report += f"Contribution: {result[:200]}...\n"
-            
-            # Track completed work
-            if "code" in result.lower() or "html" in result.lower():
-                completed_tasks.append("Website development (HTML/CSS/JavaScript)")
-                team_performance[agent_name] = "Web Development"
-            if "analysis" in result.lower() or "data" in result.lower():
-                completed_tasks.append("Data analysis and programming")
-                team_performance[agent_name] = "Data Analysis"
-            if "image" in result.lower() or "dall-e" in result.lower():
-                completed_tasks.append("Image generation and DALL-E prompts")
-                team_performance[agent_name] = "Image Generation"
-            if "article" in result.lower() or "content" in result.lower():
-                completed_tasks.append("Content creation and articles")
-                team_performance[agent_name] = "Content Creation"
-        
-        # Add detailed summary of completed tasks
-        final_report += "\n=== COMPLETED DELIVERABLES ===\n"
-        
-        if completed_tasks:
-            for i, task_type in enumerate(completed_tasks, 1):
-                final_report += f"{i}. ✅ {task_type}\n"
-        else:
-            final_report += "No specific deliverables were completed.\n"
-        
-        # Add CEO's final assessment
-        final_report += "\n=== CEO ASSESSMENT ===\n"
-        final_report += f"Project Manager: {boss.name}\n"
-        final_report += f"Team Size: {len(team_results)} specialists\n"
-        final_report += f"Project Status: COMPLETED ✅\n"
-        final_report += f"Quality Assessment: EXCELLENT\n"
-        final_report += f"Client Ready: YES\n"
-        final_report += f"Team Collaboration: SUCCESSFUL\n\n"
-        
-        # Add coordination summary
-        final_report += "=== COORDINATION SUMMARY ===\n"
-        final_report += f"✅ Task analysis and planning completed\n"
-        final_report += f"✅ Team delegation and assignment successful\n"
-        final_report += f"✅ Parallel development executed\n"
-        final_report += f"✅ Inter-agent communication maintained\n"
-        final_report += f"✅ Quality control and review completed\n"
-        final_report += f"✅ Final deliverables consolidated\n\n"
-        
-        final_report += "🎯 Project successfully completed under {boss.name}'s leadership!"
-        
-        # Save final result to task
-        task.results[boss.id] = final_report
-        task.status = TaskStatus.COMPLETED
-        task.completed_at = time.time()
-        task.updated_at = time.time()
+        # DEBUG: sprawdź czy wynik jest w task.results
+        debug_msg1 = f"DEBUG: _consolidate_results - task.results keys: {list(task.results.keys())}"
+        debug_msg2 = f"DEBUG: _consolidate_results - Integrator wynik w task.results: {'=== QWEN3 FINAL CODE ===' in task.results[boss.id]}" if boss.id in task.results else "DEBUG: _consolidate_results - Integrator wynik NIE w task.results"
+        print(debug_msg1)
+        print(debug_msg2)
         
         if self.gui:
             self.gui.stop_agent_work(boss.name)
             self.gui.update_task_status(f"🎉 {boss.name} completed project: {task.title}")
             self.gui.update_communication_log(f"[{boss.name}] 🎉 Completed project: {task.title}")
-            self.gui.update_communication_log(f"[{boss.name}] 📊 Final report prepared with {len(completed_tasks)} deliverables")
+            self.gui.update_communication_log(f"[{boss.name}] 📊 Final report prepared")
         
         return final_report
 

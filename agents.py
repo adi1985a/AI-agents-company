@@ -118,6 +118,7 @@ class AgentBase:
             if hasattr(self, 'office') and self.office and self.office.gui:
                 self.office.gui.update_task_status(f"🤖 {self.name} using Qwen3 0.6B model...")
                 self.office.gui.update_communication_log(f"[{self.name}] 🤖 Using Qwen3 0.6B model to generate response...")
+                self.office.gui.update_communication_log(f"[{self.name}] 💭 Starting to think about: {task_description[:100]}...")
             
             # Prepare prompt for specific agent type
             prompt = self._create_qwen_prompt(task_description)
@@ -143,10 +144,21 @@ class AgentBase:
             if response.status_code == 200:
                 result = response.json()
                 ai_response = result.get('response', '').strip()
-                # Log to GUI instead of terminal
+                
+                # Log thinking process to GUI
                 if hasattr(self, 'office') and self.office and self.office.gui:
+                    # Extract thinking process if present
+                    if '<think>' in ai_response:
+                        think_start = ai_response.find('<think>')
+                        think_end = ai_response.find('</think>')
+                        if think_start != -1 and think_end != -1:
+                            thinking = ai_response[think_start+7:think_end].strip()
+                            self.office.gui.update_communication_log(f"[{self.name}] 💭 <think> {thinking[:200]}...")
+                            print(f"TERMINAL: [{self.name}] 💭 <think> {thinking[:200]}...")
+                    
                     self.office.gui.update_task_status(f"✅ {self.name} received response from Qwen3")
                     self.office.gui.update_communication_log(f"[{self.name}] ✅ Received response from Qwen3 model")
+                
                 return f"{self.name}: {ai_response}"
             else:
                 error_msg = f"❌ Ollama API error for {self.name}: {response.status_code}"
@@ -239,11 +251,37 @@ class AgentBase:
             )
         elif self.role == "Integrator (Coordinator)":
             base_prompt += (
-                "You are a senior fullstack developer. Based on the following project requirements and agent outputs, generate a complete, modern, responsive website. Output only code blocks for HTML, CSS, and JavaScript.\n"
+                "You are a senior fullstack developer. Based on the following project requirements and agent outputs, generate a complete, modern, responsive website.\n"
+                "CRITICAL: Generate ONLY actual HTML, CSS, and JavaScript code. Do NOT use <think> tags or any thinking process. Output ONLY the code blocks.\n"
                 "PROJECT: {task_description}\n"
                 "DESCRIPTION: {task_description}\n"
                 "AGENT OUTPUTS:\n{chr(10).join(agent_outputs)}\n"
-                "Format:\n=== HTML CODE ===\n<...>\n=== CSS CODE ===\n<...>\n=== JAVASCRIPT CODE ===\n<...>\n"
+                "Format your response EXACTLY as:\n"
+                "=== HTML CODE ===\n"
+                "<!DOCTYPE html>\n"
+                "<html lang=\"en\">\n"
+                "<head>\n"
+                "    <meta charset=\"UTF-8\">\n"
+                "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+                "    <title>Your Website</title>\n"
+                "</head>\n"
+                "<body>\n"
+                "    <!-- Your HTML content here -->\n"
+                "</body>\n"
+                "</html>\n"
+                "\n=== CSS CODE ===\n"
+                "/* Your CSS styles here */\n"
+                "body {\n"
+                "    margin: 0;\n"
+                "    padding: 0;\n"
+                "    font-family: Arial, sans-serif;\n"
+                "}\n"
+                "\n=== JAVASCRIPT CODE ===\n"
+                "// Your JavaScript code here\n"
+                "document.addEventListener('DOMContentLoaded', function() {\n"
+                "    // Your code here\n"
+                "});\n"
+                "\nIMPORTANT: Do NOT include any <think> tags or thinking process. Generate ONLY the actual code blocks."
             )
         else:
             base_prompt += "Respond as a professional agent."
@@ -771,6 +809,7 @@ Created by {self.name} - Text Analyst"""
         action = self.decide(task.description)
         if office and office.gui:
             office.gui.update_communication_log(f"[{self.name}] 🚀 Starting work on task: {task.title}")
+            office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about: {task.description[:100]}...")
             office.gui.update_task_status(f"🔄 {self.name} working on task: {task.title}")
         if office:
             await self._communicate_with_team(task, office)
@@ -778,6 +817,9 @@ Created by {self.name} - Text Analyst"""
         
         # AI Graphic Designer: Qwen3 + Kandinsky 2.2 (kandinsky2 lib)
         if self.role == "AI Graphic Designer":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about graphic design for: {task.description[:100]}...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about graphic design for: {task.description[:100]}...")
             qwen_prompt = self._create_qwen_prompt(task.description)
             qwen_response = await self.generate_ollama_response(qwen_prompt)
             prompts = []
@@ -806,6 +848,8 @@ Created by {self.name} - Text Analyst"""
             result += "\nQwen3 table:\n" + qwen_response
         # Chatbot: komunikacja z użytkownikiem i override
         if self.role == "AI Chatbot":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about user interaction and chatbot responses...")
             # Jeśli użytkownik podał komendę 'Override: ...', nadpisz wynik
             if task.description.strip().lower().startswith("override:"):
                 override_content = task.description.strip()[9:].strip()
@@ -883,6 +927,12 @@ Created by {self.name} - Text Analyst"""
             )
         elif self.role == "Integrator (Coordinator)":
             # Zbierz wyniki od wszystkich agentów
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about integrating all agent outputs...")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Analyzing project requirements and agent results...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about integrating all agent outputs...")
+            print(f"TERMINAL: [{self.name}] 💭 Analyzing project requirements and agent results...")
+            
             summary = (
                 "=== INTEGRATOR MASTER REPORT ===\n"
                 "- Quality control: All modules checked\n"
@@ -899,13 +949,122 @@ Created by {self.name} - Text Analyst"""
                         agent_name = office.agents[sub_id].name if sub_id in office.agents else sub_id
                         agent_result = parent_task.results[sub_id]
                         agent_outputs.append(f"--- {agent_name} ---\n{agent_result}")
+            
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Collected outputs from {len(agent_outputs)} agents")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Preparing to generate final website code...")
+            
             # Buduj prompt dla Qwen3
             prompt = (
-                "You are a senior fullstack developer. Based on the following project requirements and agent outputs, generate a complete, modern, responsive website. Output only code blocks for HTML, CSS, and JavaScript.\n"
+                "You are a senior fullstack developer. Generate a complete, modern, responsive cooking website.\n"
                 f"PROJECT: {task.title}\n"
                 f"DESCRIPTION: {task.description}\n"
-                f"AGENT OUTPUTS:\n{chr(10).join(agent_outputs)}\n"
-                "Format:\n=== HTML CODE ===\n<...>\n=== CSS CODE ===\n<...>\n=== JAVASCRIPT CODE ===\n<...>\n"
+                "CRITICAL: Generate ONLY actual HTML, CSS, and JavaScript code. Do NOT use <think> tags or any thinking process. Output ONLY the code blocks.\n"
+                "Format your response EXACTLY as:\n"
+                "=== HTML CODE ===\n"
+                "<!DOCTYPE html>\n"
+                "<html lang=\"en\">\n"
+                "<head>\n"
+                "    <meta charset=\"UTF-8\">\n"
+                "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+                "    <title>Cooking Website</title>\n"
+                "</head>\n"
+                "<body>\n"
+                "    <nav>\n"
+                "        <div class=\"nav-container\">\n"
+                "            <div class=\"logo\">Cooking Delights</div>\n"
+                "            <ul>\n"
+                "                <li><a href=\"#home\">Home</a></li>\n"
+                "                <li><a href=\"#recipes\">Recipes</a></li>\n"
+                "                <li><a href=\"#blog\">Blog</a></li>\n"
+                "                <li><a href=\"#contact\">Contact</a></li>\n"
+                "            </ul>\n"
+                "        </div>\n"
+                "    </nav>\n"
+                "    <div class=\"hero\">\n"
+                "        <h1>Discover Delicious Recipes!</h1>\n"
+                "        <p>Your source for cooking inspiration and tips</p>\n"
+                "        <a href=\"#recipes\" class=\"cta-button\">Explore Recipes</a>\n"
+                "    </div>\n"
+                "    <div class=\"container\">\n"
+                "        <div class=\"section\">\n"
+                "            <h2>About Us</h2>\n"
+                "            <div class=\"grid\">\n"
+                "                <div class=\"card\">\n"
+                "                    <h3>Tasty Recipes</h3>\n"
+                "                    <p>Explore a variety of delicious recipes from around the world.</p>\n"
+                "                </div>\n"
+                "                <div class=\"card\">\n"
+                "                    <h3>Cooking Tips</h3>\n"
+                "                    <p>Get expert tips and tricks to improve your cooking skills.</p>\n"
+                "                </div>\n"
+                "                <div class=\"card\">\n"
+                "                    <h3>Healthy Eating</h3>\n"
+                "                    <p>Find healthy and nutritious meal ideas for every day.</p>\n"
+                "                </div>\n"
+                "            </div>\n"
+                "        </div>\n"
+                "    </div>\n"
+                "</body>\n"
+                "</html>\n"
+                "\n=== CSS CODE ===\n"
+                "* {\n"
+                "    margin: 0;\n"
+                "    padding: 0;\n"
+                "    box-sizing: border-box;\n"
+                "}\n"
+                "body {\n"
+                "    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;\n"
+                "    line-height: 1.6;\n"
+                "    color: #333;\n"
+                "}\n"
+                "nav {\n"
+                "    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n"
+                "    padding: 1rem 0;\n"
+                "    position: fixed;\n"
+                "    width: 100%;\n"
+                "    top: 0;\n"
+                "    z-index: 1000;\n"
+                "}\n"
+                ".hero {\n"
+                "    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n"
+                "    color: white;\n"
+                "    padding: 8rem 2rem 4rem;\n"
+                "    text-align: center;\n"
+                "    min-height: 100vh;\n"
+                "    display: flex;\n"
+                "    flex-direction: column;\n"
+                "    justify-content: center;\n"
+                "    align-items: center;\n"
+                "}\n"
+                ".cta-button {\n"
+                "    background: #ffd700;\n"
+                "    color: #333;\n"
+                "    padding: 1rem 2rem;\n"
+                "    border: none;\n"
+                "    border-radius: 50px;\n"
+                "    font-size: 1.1rem;\n"
+                "    font-weight: bold;\n"
+                "    cursor: pointer;\n"
+                "    text-decoration: none;\n"
+                "    display: inline-block;\n"
+                "}\n"
+                "\n=== JAVASCRIPT CODE ===\n"
+                "document.addEventListener('DOMContentLoaded', function() {\n"
+                "    // Smooth scrolling for navigation links\n"
+                "    document.querySelectorAll('a[href^=\"#\"]').forEach(anchor => {\n"
+                "        anchor.addEventListener('click', function (e) {\n"
+                "            e.preventDefault();\n"
+                "            const target = document.querySelector(this.getAttribute('href'));\n"
+                "            if (target) {\n"
+                "                target.scrollIntoView({\n"
+                "                    behavior: 'smooth',\n"
+                "                    block: 'start'\n"
+                "                });\n"
+                "            }\n"
+                "        });\n"
+                "    });\n"
+                "});\n"
             )
             # Wywołaj Qwen3 (Ollama)
             if OLLAMA_AVAILABLE:
@@ -913,12 +1072,6 @@ Created by {self.name} - Text Analyst"""
             else:
                 qwen_code = self.generate_simple_response(prompt)
             result = summary + "\n\n=== QWEN3 FINAL CODE ===\n" + qwen_code
-            # DEBUG: wypisz co generuje Integrator
-            print(f"DEBUG: INTEGRATOR result (first 500 chars): {result[:500]}")
-            if '=== QWEN3 FINAL CODE ===' in result:
-                print("DEBUG: INTEGRATOR - blok QWEN3 FINAL CODE JEST w wyniku!")
-            else:
-                print("DEBUG: INTEGRATOR - brak bloku QWEN3 FINAL CODE w wyniku!")
 
         # Mobile Responsiveness & Testing Agent
         elif self.role == "Mobile Responsiveness & Testing Agent":
@@ -957,6 +1110,11 @@ Created by {self.name} - Text Analyst"""
             )
         # Project Manager (rozbudowany)
         elif self.role == "Project Manager":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about project planning and task coordination...")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Planning timeline, resource allocation, and risk management...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about project planning and task coordination...")
+            print(f"TERMINAL: [{self.name}] 💭 Planning timeline, resource allocation, and risk management...")
             import datetime
             today = datetime.date.today()
             schedule = f"=== PROJECT SCHEDULE ===\n"
@@ -976,9 +1134,19 @@ Created by {self.name} - Text Analyst"""
             result = schedule
         # Web/App Developer (rozbudowany)
         elif self.role == "Web Developer":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about website structure and code architecture...")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Planning HTML structure, CSS styling, and JavaScript functionality...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about website structure and code architecture...")
+            print(f"TERMINAL: [{self.name}] 💭 Planning HTML structure, CSS styling, and JavaScript functionality...")
             result = self.generate_simple_response(task.description)
         # UI/UX Designer (rozbudowany)
         elif self.role == "UX/UI Designer":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about user experience and interface design...")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Planning color schemes, typography, and user flow...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about user experience and interface design...")
+            print(f"TERMINAL: [{self.name}] 💭 Planning color schemes, typography, and user flow...")
             result = (
                 "=== UX/UI DESIGN DELIVERABLES ===\n"
                 "- Design system: Figma, Tailwind export\n"
@@ -989,6 +1157,11 @@ Created by {self.name} - Text Analyst"""
             )
         # Copywriter & SEO Agent (rozbudowany)
         elif self.role == "Copywriter":
+            if office and office.gui:
+                office.gui.update_communication_log(f"[{self.name}] 💭 Thinking about content strategy and SEO optimization...")
+                office.gui.update_communication_log(f"[{self.name}] 💭 Planning engaging headlines and compelling copy...")
+            print(f"TERMINAL: [{self.name}] 💭 Thinking about content strategy and SEO optimization...")
+            print(f"TERMINAL: [{self.name}] 💭 Planning engaging headlines and compelling copy...")
             result = (
                 "=== COPYWRITING & SEO REPORT ===\n"
                 "- SEO texts: Homepage, product, blog\n"
@@ -1083,12 +1256,24 @@ Created by {self.name} - Text Analyst"""
             # Send message to other agent
             message_content = self._create_team_message(task, other_agent)
             if message_content:
+                # Log conference room communication
+                conference_msg = f"<talk {self.name} to {other_agent.name}> {message_content}"
+                if office.gui:
+                    office.gui.update_conference_room(conference_msg)
+                    print(f"DEBUG: wysłano do Conference Room: {conference_msg}")
+                
                 await self.send_message(other_agent, message_content, task.id, office)
                 
                 # Simulate response from other agent
                 await asyncio.sleep(0.5)
                 response = other_agent._create_response_message(task, self)
                 if response:
+                    # Log conference room response
+                    conference_response = f"<talk {other_agent.name} to {self.name}> {response}"
+                    if office.gui:
+                        office.gui.update_conference_room(conference_response)
+                        print(f"DEBUG: wysłano do Conference Room: {conference_response}")
+                    
                     await other_agent.send_message(self, response, task.id, office)
 
     def _create_team_message(self, task, other_agent):
@@ -1101,6 +1286,36 @@ Created by {self.name} - Text Analyst"""
             return f"Hello {other_agent.name}, I'm preparing image prompts. What content themes should I focus on for the visuals?"
         elif self.agent_type == AgentType.TEXT_ANALYST and other_agent.agent_type == AgentType.IMAGE_GEN:
             return f"Hi {other_agent.name}, I'm writing content. What image styles would complement the articles best?"
+        elif self.agent_type == AgentType.BOSS and other_agent.agent_type != AgentType.BOSS:
+            return f"Hello {other_agent.name}, I'm coordinating the project. How is your part of the task progressing?"
+        elif other_agent.agent_type == AgentType.BOSS and self.agent_type != AgentType.BOSS:
+            return f"Hi {other_agent.name}, I'm working on my assigned task. Do you have any specific requirements or feedback?"
+        elif self.role == "Web Developer" and other_agent.role == "UX/UI Designer":
+            return f"Hey {other_agent.name}, I'm building the website structure. What design elements should I prioritize for the layout?"
+        elif self.role == "UX/UI Designer" and other_agent.role == "Web Developer":
+            return f"Hi {other_agent.name}, I'm designing the user interface. What technical constraints should I consider for the implementation?"
+        elif self.role == "Copywriter" and other_agent.role == "AI Graphic Designer":
+            return f"Hello {other_agent.name}, I'm writing the website content. What visual themes would work best with the text I'm creating?"
+        elif self.role == "AI Graphic Designer" and other_agent.role == "Copywriter":
+            return f"Hi {other_agent.name}, I'm creating graphics. What content themes should I focus on for the visual elements?"
+        elif self.role == "Project Manager":
+            return f"Hello {other_agent.name}, I'm managing the project timeline. How is your task progressing and do you need any resources?"
+        elif self.role == "Marketing Strategist" and other_agent.role in ["Copywriter", "AI Graphic Designer"]:
+            return f"Hey {other_agent.name}, I'm planning the marketing campaign. What content or visuals would work best for our target audience?"
+        elif self.role == "Data Analyst" and other_agent.role in ["Web Developer", "UX/UI Designer"]:
+            return f"Hi {other_agent.name}, I'm analyzing user data. What insights would be most valuable for improving the website design?"
+        elif self.role == "Integrator (Coordinator)":
+            return f"Hello {other_agent.name}, I'm coordinating the final integration. How is your component coming along and what should I know for the final assembly?"
+        elif self.role == "Hosting/DevOps" and other_agent.role == "Web Developer":
+            return f"Hey {other_agent.name}, I'm setting up the hosting environment. What technical requirements should I prepare for deployment?"
+        elif self.role == "Mobile Responsiveness & Testing Agent":
+            return f"Hi {other_agent.name}, I'm testing the mobile responsiveness. Are there any specific features or sections I should pay extra attention to?"
+        elif self.role == "Feedback & QA Agent":
+            return f"Hello {other_agent.name}, I'm conducting quality assurance. What aspects of your work should I focus on during testing?"
+        elif self.role == "AI Chatbot":
+            return f"Hi {other_agent.name}, I'm preparing the chatbot responses. What information should I have ready for visitor questions?"
+        elif self.role == "Client Advisor":
+            return f"Hello {other_agent.name}, I'm gathering client requirements. What specific needs should I communicate to the team?"
         return None
 
     def _create_response_message(self, task, other_agent):
@@ -1110,7 +1325,37 @@ Created by {self.name} - Text Analyst"""
         elif self.agent_type == AgentType.CODER and other_agent.agent_type == AgentType.ANALYST:
             return f"Perfect {other_agent.name}! I'll make sure the website can display your data analysis results effectively."
         elif self.agent_type == AgentType.TEXT_ANALYST and other_agent.agent_type == AgentType.IMAGE_GEN:
-            return f"Great {other_agent.name}! I'm writing about football history and modern trends. Action shots and stadium photos would be perfect!"
+            return f"Great {other_agent.name}! I'm writing about cooking recipes and culinary tips. Food photography and kitchen imagery would be perfect!"
         elif self.agent_type == AgentType.IMAGE_GEN and other_agent.agent_type == AgentType.TEXT_ANALYST:
-            return f"Excellent {other_agent.name}! I'll focus on dynamic sports photography and modern stadium imagery to match your content."
+            return f"Excellent {other_agent.name}! I'll focus on appetizing food photography and modern kitchen imagery to match your content."
+        elif self.agent_type == AgentType.BOSS and other_agent.agent_type != AgentType.BOSS:
+            return f"Good progress {other_agent.name}! Keep me updated on any challenges or if you need additional resources."
+        elif other_agent.agent_type == AgentType.BOSS and self.agent_type != AgentType.BOSS:
+            return f"Thanks {other_agent.name}! I'm making good progress and will let you know if I encounter any issues."
+        elif self.role == "Web Developer" and other_agent.role == "UX/UI Designer":
+            return f"Perfect {other_agent.name}! I'll implement the design with clean, semantic HTML and responsive CSS. Any specific animations or interactions you'd like me to focus on?"
+        elif self.role == "UX/UI Designer" and other_agent.role == "Web Developer":
+            return f"Thanks {other_agent.name}! I'm designing with mobile-first approach and accessibility in mind. The layout will be flexible for your implementation."
+        elif self.role == "Copywriter" and other_agent.role == "AI Graphic Designer":
+            return f"Great {other_agent.name}! I'm writing engaging content about recipes and cooking tips. High-quality food photography would complement the text perfectly."
+        elif self.role == "AI Graphic Designer" and other_agent.role == "Copywriter":
+            return f"Excellent {other_agent.name}! I'll create appetizing food photography and modern kitchen imagery that matches your engaging content."
+        elif self.role == "Project Manager":
+            return f"Thanks {other_agent.name}! I'm on track with the timeline. Let me know if you need any adjustments to the schedule or additional resources."
+        elif self.role == "Marketing Strategist":
+            return f"Perfect {other_agent.name}! I'm planning campaigns that will showcase your work effectively. The content and visuals will be optimized for our target audience."
+        elif self.role == "Data Analyst":
+            return f"Great {other_agent.name}! I'm analyzing user behavior patterns that will help optimize the design and user experience."
+        elif self.role == "Integrator (Coordinator)":
+            return f"Excellent {other_agent.name}! I'm ready to integrate your component into the final product. Everything looks good for the final assembly."
+        elif self.role == "Hosting/DevOps":
+            return f"Perfect {other_agent.name}! I'm preparing the deployment environment. The hosting setup will be optimized for your code requirements."
+        elif self.role == "Mobile Responsiveness & Testing Agent":
+            return f"Thanks {other_agent.name}! I'm testing across all devices and will ensure everything works perfectly on mobile, tablet, and desktop."
+        elif self.role == "Feedback & QA Agent":
+            return f"Great {other_agent.name}! I'm conducting thorough testing and will provide detailed feedback to ensure the highest quality."
+        elif self.role == "AI Chatbot":
+            return f"Perfect {other_agent.name}! I'm preparing helpful responses for visitor questions about recipes, cooking tips, and website features."
+        elif self.role == "Client Advisor":
+            return f"Excellent {other_agent.name}! I'm gathering all the client requirements and will ensure the final product meets their expectations perfectly."
         return None 
