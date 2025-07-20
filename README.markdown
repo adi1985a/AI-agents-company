@@ -26,7 +26,7 @@ _A Python-based AI-driven tool simulating a modern office environment with advan
 
 <br> 
 <p align="center">
-  <img src="screenshots/1.gif" width="80%">
+  <img src="screenshots/1.gif" width="90%">
 </p>
 <br>
 
